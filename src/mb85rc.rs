@@ -1,42 +1,6 @@
 use embedded_hal::blocking::i2c;
 use std::io::{Seek, SeekFrom, Read, Write, Error, ErrorKind};
 
-/// Builder to create the interface with parameters
-pub struct Builder {
-    device_addr: u8,
-    device_size: Option<u32>,
-}
-
-impl Builder {
-    /// Create a new builder with default parameters
-    pub fn new() -> Self {
-        Self {
-            device_addr: 0x50,
-            device_size: None,
-        }
-    }
-
-    /// Set the I2C device address for the FRAM module
-    pub fn with_address(mut self, address: u8) -> Self {
-        self.device_addr = address;
-        self
-    }
-
-    /// Set the size of the FRAM module in bytes (overrides auto-detection)
-    pub fn with_size(mut self, size: u32) -> Self {
-        self.device_size = Some(size);
-        self
-    }
-
-    /// Finish the builder and construct the interface by attaching an I2C bus
-    pub fn connect_i2c<I2C>(self, i2c: I2C) -> MB85RC<I2C>
-    where 
-        I2C: i2c::WriteRead + i2c::Write
-    {
-        MB85RC::new(i2c, self.device_addr, self.device_size)
-    }
-}
-
 /// Interface for the FRAM module over I2C
 /// 
 /// Construct this using a [`Builder`] to set the address and size
@@ -169,5 +133,41 @@ where
     fn flush(&mut self) -> std::io::Result<()> {
         // No need to flush anything
         Ok(())
+    }
+}
+
+/// Builder to create the interface with parameters
+pub struct Builder {
+    device_addr: u8,
+    device_size: Option<u32>,
+}
+
+impl Builder {
+    /// Create a new builder with default parameters
+    pub fn new() -> Self {
+        Self {
+            device_addr: 0x50,
+            device_size: None,
+        }
+    }
+
+    /// Set the I2C device address for the FRAM module
+    pub fn with_address(mut self, address: u8) -> Self {
+        self.device_addr = address;
+        self
+    }
+
+    /// Set the size of the FRAM module in bytes (overrides auto-detection)
+    pub fn with_size(mut self, size: u32) -> Self {
+        self.device_size = Some(size);
+        self
+    }
+
+    /// Finish the builder and construct the interface by attaching an I2C bus
+    pub fn connect_i2c<I2C>(self, i2c: I2C) -> MB85RC<I2C>
+    where 
+        I2C: i2c::WriteRead + i2c::Write
+    {
+        MB85RC::new(i2c, self.device_addr, self.device_size)
     }
 }

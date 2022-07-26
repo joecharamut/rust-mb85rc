@@ -1,5 +1,8 @@
 use embedded_hal::blocking::i2c;
-use std::io::{Seek, SeekFrom, Read, Write, Error, ErrorKind};
+use core::fmt;
+use std::error::Error;
+use std::io::{Seek, SeekFrom, Read, Write, ErrorKind};
+use std::io;
 
 /// Interface for the FRAM module over I2C
 /// 
@@ -13,7 +16,9 @@ pub struct MB85RC<I2C> {
 
 impl<I2C> MB85RC<I2C>
 where
-    I2C: i2c::WriteRead + i2c::Write
+    I2C: i2c::WriteRead + i2c::Write,
+    <I2C as i2c::WriteRead>::Error: Error,
+    <I2C as i2c::Write>::Error: Error,
 {
     fn new(mut i2c: I2C, device_addr: u8, size: Option<u32>) -> Self {
         let device_size = match size {
@@ -40,30 +45,39 @@ where
     }
 
     /// Directly read bytes at `addr` into the provided buffer
-    pub fn fram_read(&mut self, addr: u16, buf: &mut [u8]) -> Result<usize, <I2C as i2c::WriteRead>::Error> {
+    pub fn fram_read(&mut self, addr: u16, buf: &mut [u8]) -> Result<usize, Mb85rcError> {
         let addr_hi = (addr >> 8) as u8;
         let addr_lo = (addr & 0xFF) as u8;
         let addr_buf = [addr_hi, addr_lo];
 
-        self.i2c.write_read(self.device_addr, &addr_buf, buf).and(Ok(buf.len()))
+        match self.i2c.write_read(self.device_addr, &addr_buf, buf) {
+            Ok(_) => Ok(buf.len()),
+            Err(e) => Err(Mb85rcError::new(format!("I2C Error: {}", e).as_str())),
+        }
     }
 
     /// Directly write bytes at `addr` from the provided buffer
-    pub fn fram_write(&mut self, addr: u16, buf: &[u8]) -> Result<usize, <I2C as i2c::Write>::Error> {
+    pub fn fram_write(&mut self, addr: u16, buf: &[u8]) -> Result<usize, Mb85rcError> {
         let addr_hi = (addr >> 8) as u8;
         let addr_lo = (addr & 0xFF) as u8;
         let addr_buf = [addr_hi, addr_lo];
         let write_buf = [&addr_buf, buf].concat();
 
-        self.i2c.write(self.device_addr, &write_buf).and(Ok(buf.len()))
+        match self.i2c.write(self.device_addr, &write_buf) {
+            Ok(_) => Ok(buf.len()),
+            Err(e) => Err(Mb85rcError::new(format!("I2C Error: {}", e).as_str())),
+        }
     }
 
-    fn read_metadata(i2c: &mut I2C, addr: u8) -> Result<[u8;3], <I2C as i2c::WriteRead>::Error> {
+    fn read_metadata(i2c: &mut I2C, addr: u8) -> Result<[u8;3], Mb85rcError> {
         // density of the FRAM module is 2^N kB, where N is the lower nybble of the second metadata byte
         let write_buf = [addr << 1];
         let mut read_buf = [0u8; 3];
 
-        i2c.write_read(0xF8 >> 1, &write_buf, &mut read_buf).and(Ok(read_buf))
+        match i2c.write_read(0xF8 >> 1, &write_buf, &mut read_buf) {
+            Ok(_) => Ok(read_buf),
+            Err(e) => Err(Mb85rcError::new(format!("I2C Error: {}", e).as_str())),
+        }
     }
 
     /// Get the auto-detected or [manually set](Builder::with_size) size of the device
@@ -79,7 +93,7 @@ impl<I2C> Seek for MB85RC<I2C> {
                 let new_cursor = p as i64;
 
                 if new_cursor >= self.device_size.into() {
-                    Err(Error::new(ErrorKind::UnexpectedEof, "Cannot seek past device memory size"))
+                    Err(io::Error::new(ErrorKind::UnexpectedEof, "Cannot seek past device memory size"))
                 } else {
                     self.cursor = p as u16;
                     Ok(self.cursor.into())
@@ -89,7 +103,7 @@ impl<I2C> Seek for MB85RC<I2C> {
                 let new_cursor = (self.cursor as i64) + p;
                 
                 if new_cursor < 0 {
-                    Err(Error::new(ErrorKind::InvalidInput, "Invalid argument (position would be negative)"))
+                    Err(io::Error::new(ErrorKind::InvalidInput, "Invalid argument (position would be negative)"))
                 } else {
                     self.cursor = new_cursor as u16;
                     Ok(self.cursor.into())
@@ -99,9 +113,9 @@ impl<I2C> Seek for MB85RC<I2C> {
                 let new_cursor = (self.cursor as i64) + p;
 
                 if new_cursor < 0 {
-                    Err(Error::new(ErrorKind::InvalidInput, "Invalid argument (position would be negative)"))
+                    Err(io::Error::new(ErrorKind::InvalidInput, "Invalid argument (position would be negative)"))
                 } else if new_cursor >= self.device_size.into() {
-                    Err(Error::new(ErrorKind::UnexpectedEof, "Cannot seek past device memory size"))
+                    Err(io::Error::new(ErrorKind::UnexpectedEof, "Cannot seek past device memory size"))
                 } else {
                     self.cursor = new_cursor as u16;
                     Ok(self.cursor.into())
@@ -113,21 +127,23 @@ impl<I2C> Seek for MB85RC<I2C> {
 
 impl<I2C> Read for MB85RC<I2C> 
 where
-    I2C: i2c::WriteRead + i2c::Write
+    I2C: i2c::WriteRead + i2c::Write,
+    <I2C as i2c::WriteRead>::Error: Error,
+    <I2C as i2c::Write>::Error: Error,
 {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        // TODO: properly return an error
-        self.fram_read(self.cursor, buf).map_err(|_| Error::new(ErrorKind::Other, "I2C Read Error"))
+        self.fram_read(self.cursor, buf).map_err(|e| io::Error::new(ErrorKind::Other, e))
     }
 }
 
 impl<I2C> Write for MB85RC<I2C>
 where
-    I2C: i2c::WriteRead + i2c::Write
+    I2C: i2c::WriteRead + i2c::Write,
+    <I2C as i2c::WriteRead>::Error: Error,
+    <I2C as i2c::Write>::Error: Error,
 {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        // TODO: properly return an error
-        self.fram_write(self.cursor, buf).map_err(|_| Error::new(ErrorKind::Other, "I2C Write Error"))
+        self.fram_write(self.cursor, buf).map_err(|e| io::Error::new(ErrorKind::Other, e))
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -166,8 +182,34 @@ impl Builder {
     /// Finish the builder and construct the interface by attaching an I2C bus
     pub fn connect_i2c<I2C>(self, i2c: I2C) -> MB85RC<I2C>
     where 
-        I2C: i2c::WriteRead + i2c::Write
+        I2C: i2c::WriteRead + i2c::Write,
+        <I2C as i2c::WriteRead>::Error: Error,
+        <I2C as i2c::Write>::Error: Error,
     {
         MB85RC::new(i2c, self.device_addr, self.device_size)
+    }
+}
+
+/// Error type for anything that might happen on the I2C side of things
+#[derive(Debug)]
+pub struct Mb85rcError {
+    details: String,
+}
+
+impl Mb85rcError {
+    fn new(msg: &str) -> Mb85rcError {
+        Mb85rcError { details: msg.to_string() }
+    }
+}
+
+impl fmt::Display for Mb85rcError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.details)
+    }
+}
+
+impl Error for Mb85rcError {
+    fn description(&self) -> &str {
+        &self.details
     }
 }
